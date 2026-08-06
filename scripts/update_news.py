@@ -1686,27 +1686,38 @@ def fetch_opml_rss(
     return out, summary_status, feed_statuses
 
 
-def load_archive(path: Path) -> dict[str, dict[str, Any]]:
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+def load_archive(output_dir: Path) -> dict[str, dict[str, Any]]:
+    """Load archive from all month-partitioned files, with migration from legacy archive.json."""
+    archive: dict[str, dict[str, Any]] = {}
 
-    items = payload.get("items", [])
-    out: dict[str, dict[str, Any]] = {}
-    if isinstance(items, list):
-        for it in items:
-            item_id = it.get("id")
-            if item_id:
-                out[item_id] = it
-    elif isinstance(items, dict):
-        for item_id, it in items.items():
-            if isinstance(it, dict):
-                it["id"] = item_id
-                out[item_id] = it
-    return out
+    def _ingest(payload: dict[str, Any]) -> None:
+        items = payload.get("items", [])
+        if isinstance(items, list):
+            for it in items:
+                item_id = it.get("id")
+                if item_id:
+                    archive[item_id] = it
+        elif isinstance(items, dict):
+            for item_id, it in items.items():
+                if isinstance(it, dict):
+                    it["id"] = item_id
+                    archive[item_id] = it
+
+    # Migration: load legacy archive.json if present
+    legacy = output_dir / "archive.json"
+    if legacy.exists():
+        try:
+            _ingest(json.loads(legacy.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+
+    # Load month-partitioned files
+    for p in sorted(output_dir.glob("archive-*.json")):
+        try:
+            _ingest(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return archive
 
 
 def event_time(record: dict[str, Any]) -> datetime | None:
@@ -2037,13 +2048,12 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    archive_path = output_dir / "archive.json"
     latest_path = output_dir / "latest-24h.json"
     status_path = output_dir / "source-status.json"
     waytoagi_path = output_dir / "waytoagi-7d.json"
     title_cache_path = output_dir / "title-zh-cache.json"
 
-    archive = load_archive(archive_path)
+    archive = load_archive(output_dir)
 
     session = create_session()
     raw_items, statuses = collect_all(session, now)
@@ -2216,15 +2226,43 @@ def main() -> int:
         "items_all": latest_items_all_dedup,
     }
 
-    archive_payload = {
-        "generated_at": iso(now),
-        "total_items": len(archive),
-        "items": sorted(
-            archive.values(),
+    # Split archive by year-month
+    month_groups: dict[str, list[dict[str, Any]]] = {}
+    for record in archive.values():
+        ts = (parse_iso(record.get("last_seen_at"))
+              or parse_iso(record.get("published_at"))
+              or parse_iso(record.get("first_seen_at"))
+              or now)
+        ym = ts.strftime("%Y-%m")
+        month_groups.setdefault(ym, []).append(record)
+
+    # Write month-partitioned archive files
+    written_months: set[str] = set()
+    for ym, records in sorted(month_groups.items()):
+        records.sort(
             key=lambda x: parse_iso(x.get("last_seen_at")) or datetime.min.replace(tzinfo=UTC),
             reverse=True,
-        ),
-    }
+        )
+        month_path = output_dir / f"archive-{ym}.json"
+        month_payload = {
+            "generated_at": iso(now),
+            "year_month": ym,
+            "total_items": len(records),
+            "items": records,
+        }
+        month_path.write_text(json.dumps(month_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        written_months.add(month_path.name)
+        print(f"Wrote: {month_path} ({len(records)} items)")
+
+    # Clean up empty month files and legacy archive.json
+    for p in sorted(output_dir.glob("archive-*.json")):
+        if p.name not in written_months:
+            p.unlink()
+            print(f"Removed stale: {p}")
+    legacy = output_dir / "archive.json"
+    if legacy.exists():
+        legacy.unlink()
+        print(f"Removed legacy: {legacy}")
 
     status_payload = {
         "generated_at": iso(now),
@@ -2278,13 +2316,13 @@ def main() -> int:
         }
 
     latest_path.write_text(json.dumps(latest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    archive_path.write_text(json.dumps(archive_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # archive is now written as month-partitioned files above
     status_path.write_text(json.dumps(status_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     waytoagi_path.write_text(json.dumps(waytoagi_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     title_cache_path.write_text(json.dumps(title_cache, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"Wrote: {latest_path} ({len(latest_items)} items)")
-    print(f"Wrote: {archive_path} ({len(archive)} items)")
+    print(f"Archive: {len(month_groups)} month file(s), {len(archive)} total items")
     print(f"Wrote: {status_path}")
     print(f"Wrote: {waytoagi_path} ({waytoagi_payload.get('count_7d', 0)} items)")
     print(f"Wrote: {title_cache_path} ({len(title_cache)} entries)")
