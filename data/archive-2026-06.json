@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-08-07T14:47:03.033679Z",
+  "generated_at": "2026-08-07T15:48:01.532719Z",
   "year_month": "2026-06",
-  "total_items": 10959,
+  "total_items": 10958,
   "items": [
     {
       "id": "e8e842191bd12d2a63af6770cacb59030def7731",
@@ -49391,17 +49391,6 @@
       "url": "https://www.zhihu.com/question/2050925066297111676",
       "published_at": null,
       "first_seen_at": "2026-06-23T17:11:48.404220Z",
-      "last_seen_at": "2026-06-24T15:29:36.658518Z"
-    },
-    {
-      "id": "e9da95a8230e637cdea3d106d9bffaac25e9e86e",
-      "site_id": "tophub",
-      "site_name": "TopHub",
-      "source": "微博 · 热搜榜",
-      "title": "黄金",
-      "url": "https://s.weibo.com/weibo?q=%E9%BB%84%E9%87%91",
-      "published_at": null,
-      "first_seen_at": "2026-06-05T17:09:20.474416Z",
       "last_seen_at": "2026-06-24T15:29:36.658518Z"
     },
     {
